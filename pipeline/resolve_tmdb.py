@@ -286,7 +286,24 @@ def main():
     max_req, stats = int(arg('--max') or 0), {'requests': 0}
     counting = threading.Lock()
 
+    # Answers are kept for the run: the poster and title passes often ask the
+    # same search, credits or images again (editions share titles, and a
+    # candidate turns up for several posters). Only real answers are kept;
+    # errors are retried as before.
+    memo, memo_lock = {}, threading.Lock()
+
     def api(path, **params):
+        key = (path, tuple(sorted(params.items())))
+        with memo_lock:
+            if key in memo:
+                stats['cached'] = stats.get('cached', 0) + 1
+                return memo[key]
+        result = fetch(path, **params)
+        with memo_lock:
+            memo[key] = result
+        return result
+
+    def fetch(path, **params):
         if max_req and stats['requests'] >= max_req:
             raise Stop(f'reached {max_req} requests')
         url = API + path + ('?' + urllib.parse.urlencode(params) if params else '')
@@ -575,7 +592,7 @@ def main():
     except Stop as why:
         log(f'stopping: {why}')
     pool.shutdown(cancel_futures=True)
-    log(f'{found} matched by title this run; {stats["requests"]} requests in all')
+    log(f'{found} matched by title this run; {stats["requests"]} requests in all, {stats.get("cached", 0)} answered from this run\'s cache')
 
     write_corrections()
 
